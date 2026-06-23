@@ -1,0 +1,426 @@
+require("dotenv").config();
+const Stripe = require("stripe");
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+const express = require("express");
+const Database = require("better-sqlite3");
+
+const db = new Database("shirinart.db");
+
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
+
+// make sure the images folder exists
+const UPLOAD_DIR = path.join(__dirname, "public", "images");
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+// multer: where uploaded images go and how they're named
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, UPLOAD_DIR),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, `${Date.now()}-${Math.round(Math.random() * 1e6)}${ext}`);
+  },
+});
+const upload = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ok = [".jpg", ".jpeg", ".png", ".webp"].includes(
+      path.extname(file.originalname).toLowerCase()
+    );
+    cb(ok ? null : new Error("Only JPG, PNG, or WebP images allowed."), ok);
+  },
+});
+
+// HTTP Basic Auth gate for admin routes
+function requireAdmin(req, res, next) {
+  const header = req.headers.authorization || "";
+  const [scheme, encoded] = header.split(" ");
+
+  if (scheme === "Basic" && encoded) {
+    const decoded = Buffer.from(encoded, "base64").toString();
+    const [, password] = decoded.split(":");
+    if (password === process.env.ADMIN_PASSWORD) {
+      return next();
+    }
+  }
+
+  res.set("WWW-Authenticate", 'Basic realm="ShirinArt Admin"');
+  res.status(401).send("Authentication required.");
+}
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS artworks (
+    id          TEXT PRIMARY KEY,
+    title       TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    medium      TEXT NOT NULL DEFAULT '',
+    dimensions  TEXT NOT NULL DEFAULT '',
+    year        INTEGER NOT NULL DEFAULT 0,
+    price_cents INTEGER NOT NULL,
+    image_path  TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'available',
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS orders (
+    id                TEXT PRIMARY KEY,
+    stripe_session_id TEXT,
+    status            TEXT NOT NULL DEFAULT 'pending',
+    buyer_email       TEXT,
+    shipping_address  TEXT,
+    total_cents       INTEGER,
+    created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+`);
+
+const app = express();
+
+// Webhook must come BEFORE express.json(), because Stripe's signature
+// check needs the raw, unparsed request body.
+app.post("/api/webhook", express.raw({ type: "application/json" }), (req, res) => {
+  const sig = req.headers["stripe-signature"];
+  let event;
+
+  try {
+    event = stripe.webhooks.constructEvent(
+      req.body,
+      sig,
+      process.env.STRIPE_WEBHOOK_SECRET
+    );
+  } catch (err) {
+    console.error("Webhook signature failed:", err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object;
+    const ids = (session.metadata.artwork_ids || "").split(",").filter(Boolean);
+
+    const recordSale = db.transaction(() => {
+      const markSold = db.prepare(
+        "UPDATE artworks SET status = 'sold' WHERE id = ? AND status = 'available'"
+      );
+      for (const id of ids) {
+        markSold.run(id);
+      }
+
+      db.prepare(
+        `INSERT INTO orders (id, stripe_session_id, status, buyer_email, shipping_address, total_cents)
+         VALUES (?, ?, 'paid', ?, ?, ?)`
+      ).run(
+        session.id,
+        session.id,
+        session.customer_details?.email || "",
+        JSON.stringify(session.customer_details?.address || {}),
+        session.amount_total
+      );
+    });
+
+    try {
+      recordSale();
+      console.log(`Sale recorded: ${ids.join(", ")}`);
+    } catch (err) {
+      console.error("Failed to record sale:", err.message);
+    }
+  }
+
+  res.json({ received: true });
+});
+
+// JSON parsing for all the OTHER routes — must come after the webhook.
+app.use(express.json());
+
+app.use(express.static(path.join(__dirname, "public")));
+
+/* ============================================================
+   ADMIN
+   ============================================================ */
+
+// Admin studio page (password-protected)
+app.get("/admin", requireAdmin, (req, res) => {
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Studio — ShirinArt</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root { --ink:#161618; --soft:#565660; --line:rgba(20,20,26,0.12); --accent:#2233CC; --bg:#F4F4F2; --card:#fff; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font-family:"Work Sans",sans-serif; }
+    .topbar { display:flex; align-items:center; justify-content:space-between; padding:1.2rem 2rem; border-bottom:1px solid var(--line); background:var(--card); }
+    .topbar h1 { font-family:"Cormorant Garamond",serif; font-weight:600; font-size:1.6rem; margin:0; }
+    .topbar a { color:var(--soft); text-decoration:none; font-size:0.9rem; }
+    .wrap { max-width:1000px; margin:2.5rem auto; padding:0 1.5rem; display:grid; grid-template-columns:380px 1fr; gap:2.5rem; align-items:start; }
+    @media (max-width:820px){ .wrap{ grid-template-columns:1fr; } }
+    .panel { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:1.6rem; }
+    .panel h2 { font-family:"Cormorant Garamond",serif; font-weight:600; font-size:1.5rem; margin:0 0 1.2rem; }
+    label { display:block; font-size:0.82rem; font-weight:600; color:var(--soft); margin:0 0 0.35rem; }
+    input, textarea { width:100%; font-family:inherit; font-size:0.95rem; padding:0.65rem 0.8rem; border:1.5px solid var(--line); border-radius:10px; margin-bottom:1rem; background:#fff; }
+    input:focus, textarea:focus { outline:none; border-color:var(--accent); }
+    .row { display:flex; gap:0.8rem; }
+    .row > div { flex:1; }
+    button { font-family:inherit; font-weight:600; cursor:pointer; border:none; border-radius:999px; }
+    .btn-primary { background:var(--accent); color:#fff; padding:0.75rem 1.4rem; width:100%; font-size:0.95rem; }
+    .btn-primary:hover { background:#18227F; }
+    .list-item { display:flex; gap:1rem; align-items:center; padding:0.9rem 0; border-bottom:1px solid var(--line); }
+    .list-item img { width:54px; height:68px; object-fit:cover; border-radius:30px 30px 4px 4px; border:1px solid var(--line); }
+    .list-item__info { flex:1; min-width:0; }
+    .list-item__title { font-family:"Cormorant Garamond",serif; font-size:1.2rem; }
+    .list-item__meta { font-size:0.82rem; color:var(--soft); }
+    .pill { font-size:0.72rem; padding:0.15rem 0.6rem; border-radius:999px; font-weight:600; }
+    .pill--available { background:rgba(34,51,204,0.1); color:var(--accent); }
+    .pill--sold { background:rgba(20,20,26,0.08); color:var(--soft); }
+    .actions { display:flex; gap:0.5rem; }
+    .mini { font-size:0.8rem; padding:0.4rem 0.8rem; border:1px solid var(--line); background:#fff; color:var(--soft); }
+    .mini:hover { border-color:var(--accent); color:var(--accent); }
+    .mini--danger:hover { border-color:#c0392b; color:#c0392b; }
+    .note { font-size:0.85rem; color:var(--accent); min-height:1.2em; margin-top:0.5rem; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <h1>Shirin's Studio</h1>
+    <a href="/" target="_blank">View gallery ↗</a>
+  </div>
+
+  <div class="wrap">
+    <div class="panel">
+      <h2>Add a painting</h2>
+      <form id="addForm" enctype="multipart/form-data">
+        <label>Title</label>
+        <input name="title" required />
+        <label>Description</label>
+        <textarea name="description" rows="2"></textarea>
+        <div class="row">
+          <div><label>Medium</label><input name="medium" placeholder="Oil on canvas" /></div>
+          <div><label>Year</label><input name="year" type="number" placeholder="2025" /></div>
+        </div>
+        <div class="row">
+          <div><label>Dimensions</label><input name="dimensions" placeholder="60 x 80 cm" /></div>
+          <div><label>Price (USD)</label><input name="price" type="number" step="0.01" placeholder="850" required /></div>
+        </div>
+        <label>Image</label>
+        <input name="image" type="file" accept="image/*" required />
+        <button type="submit" class="btn-primary">Add to gallery</button>
+        <p class="note" id="addNote"></p>
+      </form>
+    </div>
+
+    <div class="panel">
+      <h2>Your collection</h2>
+      <div id="list">Loading…</div>
+    </div>
+  </div>
+
+  <script>
+    async function loadList() {
+      const res = await fetch("/api/artworks");
+      const arts = await res.json();
+      const list = document.getElementById("list");
+      if (!arts.length) { list.innerHTML = "<p style='color:#565660'>No pieces yet.</p>"; return; }
+      list.innerHTML = "";
+      for (const a of arts) {
+        const sold = a.status === "sold";
+        const row = document.createElement("div");
+        row.className = "list-item";
+        row.innerHTML = \`
+          <img src="\${a.image_path}" alt="" />
+          <div class="list-item__info">
+            <div class="list-item__title">\${a.title}</div>
+            <div class="list-item__meta">$\${(a.price_cents/100).toFixed(2)} ·
+              <span class="pill pill--\${sold ? "sold":"available"}">\${sold ? "Sold":"Available"}</span>
+            </div>
+          </div>
+          <div class="actions">
+            <button class="mini" data-toggle="\${a.id}">\${sold ? "Mark available":"Mark sold"}</button>
+            <button class="mini mini--danger" data-del="\${a.id}">Delete</button>
+          </div>\`;
+        row.querySelector("[data-toggle]").onclick = () => toggle(a.id);
+        row.querySelector("[data-del]").onclick = () => del(a.id, a.title);
+        list.appendChild(row);
+      }
+    }
+
+    async function toggle(id) {
+      const res = await fetch("/admin/artworks/" + id + "/status", { method: "POST", credentials: "include" });
+      if (!res.ok) { alert("Action failed (" + res.status + "). Try reloading and re-entering the password."); return; }
+      loadList();
+    }
+
+    async function del(id, title) {
+      if (!confirm('Delete "' + title + '"? This cannot be undone.')) return;
+      const res = await fetch("/admin/artworks/" + id + "/delete", { method: "POST", credentials: "include" });
+      if (!res.ok) { alert("Delete failed (" + res.status + ")."); return; }
+      loadList();
+    }
+
+    document.getElementById("addForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const note = document.getElementById("addNote");
+      note.textContent = "Uploading…";
+      const data = new FormData(e.target);
+      const res = await fetch("/admin/artworks", { method: "POST", body: data, credentials: "include" });
+      if (res.ok) { e.target.reset(); note.textContent = "Added."; loadList(); }
+      else { note.textContent = "Something went wrong."; }
+    });
+
+    loadList();
+  </script>
+</body>
+</html>`);
+});
+
+// Add an artwork
+app.post("/admin/artworks", requireAdmin, upload.single("image"), (req, res) => {
+  const { title, description, medium, dimensions, year, price } = req.body;
+
+  if (!title || !price || !req.file) {
+    return res.status(400).send("Title, price, and image are required.");
+  }
+
+  const id =
+    title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") +
+    "-" + Date.now().toString().slice(-5);
+
+  db.prepare(
+    `INSERT INTO artworks (id, title, description, medium, dimensions, year, price_cents, image_path)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id,
+    title,
+    description || "",
+    medium || "",
+    dimensions || "",
+    parseInt(year) || 0,
+    Math.round(parseFloat(price) * 100),
+    `/images/${req.file.filename}`
+  );
+
+  res.json({ ok: true });
+});
+
+// Delete an artwork (and its image file)
+app.post("/admin/artworks/:id/delete", requireAdmin, (req, res) => {
+  const art = db.prepare("SELECT image_path FROM artworks WHERE id = ?").get(req.params.id);
+  if (!art) return res.status(404).json({ error: "Not found" });
+
+  if (art.image_path && art.image_path.startsWith("/images/")) {
+    const filePath = path.join(UPLOAD_DIR, path.basename(art.image_path));
+    fs.unlink(filePath, () => {});
+  }
+
+  db.prepare("DELETE FROM artworks WHERE id = ?").run(req.params.id);
+  res.json({ ok: true });
+});
+
+// Toggle a piece between available and sold
+app.post("/admin/artworks/:id/status", requireAdmin, (req, res) => {
+  const art = db.prepare("SELECT status FROM artworks WHERE id = ?").get(req.params.id);
+  if (!art) return res.status(404).json({ error: "Not found" });
+
+  const next = art.status === "sold" ? "available" : "sold";
+  db.prepare("UPDATE artworks SET status = ? WHERE id = ?").run(next, req.params.id);
+  res.json({ ok: true, status: next });
+});
+
+/* ============================================================
+   PUBLIC API + PAGES
+   ============================================================ */
+
+// Checkout — server looks up real prices, guards inventory-of-1
+app.post("/api/checkout", async (req, res) => {
+  const ids = req.body.ids;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: "No items in cart." });
+  }
+
+  const placeholders = ids.map(() => "?").join(",");
+  const pieces = db
+    .prepare(`SELECT id, title, price_cents, status, image_path FROM artworks WHERE id IN (${placeholders})`)
+    .all(...ids);
+
+  if (pieces.length !== ids.length) {
+    return res.status(400).json({ error: "One or more items no longer exist." });
+  }
+
+  const unavailable = pieces.filter((p) => p.status !== "available");
+  if (unavailable.length > 0) {
+    return res.status(409).json({
+      error: "Some pieces are no longer available.",
+      sold: unavailable.map((p) => p.title),
+    });
+  }
+
+  try {
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      line_items: pieces.map((p) => ({
+        quantity: 1,
+        price_data: {
+          currency: "usd",
+          unit_amount: p.price_cents,
+          product_data: { name: p.title },
+        },
+      })),
+      shipping_address_collection: { allowed_countries: ["US", "CA", "GB"] },
+      success_url: `${req.protocol}://${req.get("host")}/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${req.protocol}://${req.get("host")}/cancel`,
+      metadata: { artwork_ids: ids.join(",") },
+    });
+
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error("Stripe error:", err.message);
+    res.status(500).json({ error: "Could not start checkout." });
+  }
+});
+
+// Public list of artworks
+app.get("/api/artworks", (req, res) => {
+  const artworks = db
+    .prepare("SELECT id, title, description, medium, dimensions, year, price_cents, image_path, status FROM artworks ORDER BY created_at DESC")
+    .all();
+  res.json(artworks);
+});
+
+// Success page — verifies payment with Stripe
+app.get("/success", async (req, res) => {
+  const sessionId = req.query.session_id;
+  if (!sessionId) return res.redirect("/");
+
+  let paid = false;
+  try {
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+    paid = session.payment_status === "paid";
+  } catch (err) {
+    console.error("Success lookup failed:", err.message);
+  }
+
+  res.send(`
+    <html><body style="font-family: sans-serif; text-align: center; padding: 4rem;">
+      <h1>${paid ? "Thank you" : "Hmm…"}</h1>
+      <p>${paid
+        ? "Your order is confirmed. Shirin will be in touch about shipping."
+        : "We couldn't confirm your payment. Please contact us."}</p>
+      <a href="/">Return to the gallery</a>
+    </body></html>
+  `);
+});
+
+app.get("/cancel", (req, res) => {
+  res.send(`
+    <html><body style="font-family: sans-serif; text-align: center; padding: 4rem;">
+      <h1>Order cancelled</h1>
+      <p>No charge was made. Your cart is still here whenever you're ready.</p>
+      <a href="/">Return to the gallery</a>
+    </body></html>
+  `);
+});
+
+app.listen(process.env.PORT || 3000, () => console.log("listening"));

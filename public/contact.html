@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Contact — ShirinArt</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body class="page">
+  <header class="nav nav--solid">
+    <a href="/" class="wordmark">SHIRIN<span class="wordmark__art">art</span></a>
+    <nav class="nav__links" aria-label="Primary">
+  <a href="/">Home</a>
+  <a href="/gallery.html">Gallery</a>
+  <a href="/about.html">About</a>
+  <a href="/contact.html">Contact</a>
+</nav>
+    <button class="cart-toggle" id="cartToggle" aria-label="Open cart">
+  <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+    <path d="M3 4h2l2.4 11.2a1.6 1.6 0 0 0 1.57 1.3h7.9a1.6 1.6 0 0 0 1.56-1.24L21 8H6.2"
+          fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="9.5" cy="20" r="1.3" fill="currentColor"/>
+    <circle cx="17" cy="20" r="1.3" fill="currentColor"/>
+  </svg>
+  <span class="cart-toggle__count" id="cartCount" hidden>0</span>
+</button>
+  </header>
+
+  <main class="page-wrap">
+    <section class="page-hero">
+      <p class="section-head__label">Get in Touch</p>
+      <h1 class="page-hero__title">Contact</h1>
+      <p class="page-hero__sub">Lorem ipsum dolor sit amet, consectetur adipiscing elit sed do eiusmod.</p>
+    </section>
+
+    <form class="contact-form" id="contactForm">
+      <div class="field"><label for="cname">Name</label><input id="cname" type="text" required /></div>
+      <div class="field"><label for="cemail">Email</label><input id="cemail" type="email" required /></div>
+      <div class="field field--full"><label for="cmsg">Message</label><textarea id="cmsg" rows="5" required></textarea></div>
+      <button type="submit" class="btn btn--solid">Send message</button>
+    </form>
+  </main>
+
+  <footer class="footer">
+    <p class="footer__mark">SHIRIN<span class="wordmark__art">art</span></p>
+    <p class="footer__fine">Original paintings · <span id="year"></span></p>
+  </footer>
+
+  <script>
+    document.getElementById("year").textContent = new Date().getFullYear();
+    document.getElementById("contactForm").addEventListener("submit", (e) => {
+      e.preventDefault();
+      const name = document.getElementById("cname").value;
+      const email = document.getElementById("cemail").value;
+      const msg = document.getElementById("cmsg").value;
+      const subject = encodeURIComponent(`Message from ${name} — ShirinArt`);
+      const body = encodeURIComponent(`${msg}\n\n— ${name} (${email})`);
+      window.location.href = `mailto:hello@shirinart.com?subject=${subject}&body=${body}`;
+    });
+  </script>
+</body>
+</html>
