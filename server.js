@@ -2,6 +2,7 @@ require("dotenv").config();
 const Stripe = require("stripe");
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 const express = require("express");
+const rateLimit = require("express-rate-limit");
 const Database = require("better-sqlite3");
 
 const db = new Database("shirinart.db");
@@ -31,6 +32,14 @@ const upload = multer({
     );
     cb(ok ? null : new Error("Only JPG, PNG, or WebP images allowed."), ok);
   },
+});
+
+const adminLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  message: "Too many attempts — try again in 15 minutes.",
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
 // HTTP Basic Auth gate for admin routes
@@ -74,6 +83,25 @@ db.exec(`
     created_at        TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `);
+
+// Auto-seed demo artworks on first startup (empty database)
+const isEmpty = db.prepare("SELECT COUNT(*) as n FROM artworks").get().n === 0;
+if (isEmpty) {
+  const insert = db.prepare(`
+    INSERT OR IGNORE INTO artworks (id, title, description, medium, dimensions, year, price_cents, image_path, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const seed = db.transaction(() => {
+    insert.run("borgo-al-tramonto",  "Borgo al Tramonto",    "The last light on the rooftops of a hill town.",             "Oil on canvas", "60 × 80 cm", 2025, 85000,  "https://picsum.photos/id/1015/800/1000", "available");
+    insert.run("finestra-azzurra",   "La Finestra Azzurra",  "A blue shutter left ajar on a summer afternoon.",            "Oil on linen",  "40 × 50 cm", 2024, 62000,  "https://picsum.photos/id/1025/800/1000", "available");
+    insert.run("vicolo-stretto",     "Vicolo Stretto",       "A narrow alley climbing toward the church bells.",           "Oil on canvas", "50 × 70 cm", 2025, 74000,  "https://picsum.photos/id/1039/800/1000", "available");
+    insert.run("panni-al-sole",      "Panni al Sole",        "Laundry strung between two stone walls.",                    "Oil on board",  "30 × 40 cm", 2024, 48000,  "https://picsum.photos/id/1043/800/1000", "sold");
+    insert.run("piazza-deserta",     "Piazza Deserta",       "The empty square in the hour of the siesta.",                "Oil on canvas", "70 × 90 cm", 2023, 120000, "https://picsum.photos/id/1052/800/1000", "available");
+    insert.run("uliveto-sera",       "Uliveto di Sera",      "An olive grove silvering in the evening wind.",              "Oil on linen",  "55 × 75 cm", 2025, 98000,  "https://picsum.photos/id/1067/800/1000", "sold");
+  });
+  seed();
+  console.log("Database was empty — demo artworks seeded.");
+}
 
 const app = express();
 
@@ -139,7 +167,7 @@ app.use(express.static(path.join(__dirname, "public")));
    ============================================================ */
 
 // Admin studio page (password-protected)
-app.get("/admin", requireAdmin, (req, res) => {
+app.get("/admin", adminLimiter, requireAdmin, (req, res) => {
   res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -277,7 +305,7 @@ app.get("/admin", requireAdmin, (req, res) => {
 });
 
 // Add an artwork
-app.post("/admin/artworks", requireAdmin, upload.single("image"), (req, res) => {
+app.post("/admin/artworks", adminLimiter, requireAdmin, upload.single("image"), (req, res) => {
   const { title, description, medium, dimensions, year, price } = req.body;
 
   if (!title || !price || !req.file) {
@@ -306,7 +334,7 @@ app.post("/admin/artworks", requireAdmin, upload.single("image"), (req, res) => 
 });
 
 // Delete an artwork (and its image file)
-app.post("/admin/artworks/:id/delete", requireAdmin, (req, res) => {
+app.post("/admin/artworks/:id/delete", adminLimiter, requireAdmin, (req, res) => {
   const art = db.prepare("SELECT image_path FROM artworks WHERE id = ?").get(req.params.id);
   if (!art) return res.status(404).json({ error: "Not found" });
 
@@ -320,7 +348,7 @@ app.post("/admin/artworks/:id/delete", requireAdmin, (req, res) => {
 });
 
 // Toggle a piece between available and sold
-app.post("/admin/artworks/:id/status", requireAdmin, (req, res) => {
+app.post("/admin/artworks/:id/status", adminLimiter, requireAdmin, (req, res) => {
   const art = db.prepare("SELECT status FROM artworks WHERE id = ?").get(req.params.id);
   if (!art) return res.status(404).json({ error: "Not found" });
 
