@@ -6,7 +6,7 @@
   <title>Gallery — ShirinArt</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Jost:wght@400;500;600;700&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=Jost:wght@400;500;600;700&family=Raleway:wght@300;400;500;600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/styles.css" />
   <script src="/nav.js" defer></script>
 </head>
@@ -41,6 +41,15 @@
       <h1 class="page-hero__title">Every available work</h1>
       <p class="page-hero__sub">Each painting is an original — once it sells, it's gone.</p>
     </section>
+
+    <div class="filter-tabs" id="filterTabs">
+      <button class="filter-tab is-active" data-cat="all">All</button>
+      <button class="filter-tab" data-cat="oil-painting">Oil Painting</button>
+      <button class="filter-tab" data-cat="mosaic">Mosaic</button>
+      <button class="filter-tab" data-cat="business-cards">Business Cards</button>
+      <button class="filter-tab" data-cat="logos">Logos</button>
+    </div>
+
     <div id="grid"></div>
   </main>
 

@@ -1,3 +1,25 @@
+// Accent bar — vine-green strip at very top of every page
+const bar = document.createElement('div');
+bar.className = 'accent-bar';
+document.body.insertAdjacentElement('afterbegin', bar);
+
+// Page fade-in
+requestAnimationFrame(() => document.body.classList.add('is-loaded'));
+
+// Page fade-out on same-origin navigations
+document.querySelectorAll('a[href]').forEach(link => {
+  const href = link.getAttribute('href');
+  if (!href) return;
+  if (href.startsWith('http') || href.startsWith('#') ||
+      href.startsWith('mailto') || href.startsWith('tel') ||
+      link.target === '_blank') return;
+  link.addEventListener('click', e => {
+    e.preventDefault();
+    document.body.classList.remove('is-loaded');
+    setTimeout(() => { window.location.href = href; }, 220);
+  });
+});
+
 // Active nav link
 const path = window.location.pathname;
 document.querySelectorAll('.nav__links a').forEach(link => {

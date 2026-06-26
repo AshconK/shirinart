@@ -2,6 +2,7 @@ require("dotenv").config();
 const Stripe = require("stripe");
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 const express = require("express");
+const helmet = require("helmet");
 const rateLimit = require("express-rate-limit");
 const Database = require("better-sqlite3");
 
@@ -9,30 +10,32 @@ const db = new Database("shirinart.db");
 
 const multer = require("multer");
 const path = require("path");
-const fs = require("fs");
+const cloudinary = require("cloudinary").v2;
 
-// make sure the images folder exists
-const UPLOAD_DIR = path.join(__dirname, "public", "images");
-fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-
-// multer: where uploaded images go and how they're named
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, UPLOAD_DIR),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    cb(null, `${Date.now()}-${Math.round(Math.random() * 1e6)}${ext}`);
-  },
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key:    process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
 });
+
+// Store uploads in memory — we stream directly to Cloudinary
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const ok = [".jpg", ".jpeg", ".png", ".webp"].includes(
-      path.extname(file.originalname).toLowerCase()
-    );
+    const ok = ["image/jpeg", "image/png", "image/webp"].includes(file.mimetype);
     cb(ok ? null : new Error("Only JPG, PNG, or WebP images allowed."), ok);
   },
 });
+
+function uploadToCloudinary(buffer) {
+  return new Promise((resolve, reject) => {
+    cloudinary.uploader.upload_stream(
+      { folder: "shirinart", resource_type: "image" },
+      (err, result) => { if (err) reject(err); else resolve(result); }
+    ).end(buffer);
+  });
+}
 
 const adminLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -68,9 +71,11 @@ db.exec(`
     dimensions  TEXT NOT NULL DEFAULT '',
     year        INTEGER NOT NULL DEFAULT 0,
     price_cents INTEGER NOT NULL,
-    image_path  TEXT NOT NULL DEFAULT '',
-    status      TEXT NOT NULL DEFAULT 'available',
-    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    image_path    TEXT NOT NULL DEFAULT '',
+    cloudinary_id TEXT NOT NULL DEFAULT '',
+    status        TEXT NOT NULL DEFAULT 'available',
+    category      TEXT NOT NULL DEFAULT 'oil-painting',
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
   CREATE TABLE IF NOT EXISTS orders (
@@ -84,20 +89,24 @@ db.exec(`
   );
 `);
 
+// Safe migrations for existing databases
+try { db.exec("ALTER TABLE artworks ADD COLUMN category TEXT NOT NULL DEFAULT 'oil-painting'"); } catch {}
+try { db.exec("ALTER TABLE artworks ADD COLUMN cloudinary_id TEXT NOT NULL DEFAULT ''"); } catch {}
+
 // Auto-seed demo artworks on first startup (empty database)
 const isEmpty = db.prepare("SELECT COUNT(*) as n FROM artworks").get().n === 0;
 if (isEmpty) {
   const insert = db.prepare(`
-    INSERT OR IGNORE INTO artworks (id, title, description, medium, dimensions, year, price_cents, image_path, status)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO artworks (id, title, description, medium, dimensions, year, price_cents, image_path, status, category)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const seed = db.transaction(() => {
-    insert.run("borgo-al-tramonto",  "Borgo al Tramonto",    "The last light on the rooftops of a hill town.",             "Oil on canvas", "60 × 80 cm", 2025, 85000,  "https://picsum.photos/id/1015/800/1000", "available");
-    insert.run("finestra-azzurra",   "La Finestra Azzurra",  "A blue shutter left ajar on a summer afternoon.",            "Oil on linen",  "40 × 50 cm", 2024, 62000,  "https://picsum.photos/id/1025/800/1000", "available");
-    insert.run("vicolo-stretto",     "Vicolo Stretto",       "A narrow alley climbing toward the church bells.",           "Oil on canvas", "50 × 70 cm", 2025, 74000,  "https://picsum.photos/id/1039/800/1000", "available");
-    insert.run("panni-al-sole",      "Panni al Sole",        "Laundry strung between two stone walls.",                    "Oil on board",  "30 × 40 cm", 2024, 48000,  "https://picsum.photos/id/1043/800/1000", "sold");
-    insert.run("piazza-deserta",     "Piazza Deserta",       "The empty square in the hour of the siesta.",                "Oil on canvas", "70 × 90 cm", 2023, 120000, "https://picsum.photos/id/1052/800/1000", "available");
-    insert.run("uliveto-sera",       "Uliveto di Sera",      "An olive grove silvering in the evening wind.",              "Oil on linen",  "55 × 75 cm", 2025, 98000,  "https://picsum.photos/id/1067/800/1000", "sold");
+    insert.run("borgo-al-tramonto",  "Borgo al Tramonto",    "The last light on the rooftops of a hill town.",             "Oil on canvas", "60 × 80 cm", 2025, 85000,  "https://picsum.photos/id/1015/800/1000", "available",  "oil-painting");
+    insert.run("finestra-azzurra",   "La Finestra Azzurra",  "A blue shutter left ajar on a summer afternoon.",            "Oil on linen",  "40 × 50 cm", 2024, 62000,  "https://picsum.photos/id/1025/800/1000", "available",  "oil-painting");
+    insert.run("vicolo-stretto",     "Vicolo Stretto",       "A narrow alley climbing toward the church bells.",           "Oil on canvas", "50 × 70 cm", 2025, 74000,  "https://picsum.photos/id/1039/800/1000", "available",  "oil-painting");
+    insert.run("panni-al-sole",      "Panni al Sole",        "Laundry strung between two stone walls.",                    "Oil on board",  "30 × 40 cm", 2024, 48000,  "https://picsum.photos/id/1043/800/1000", "sold",       "oil-painting");
+    insert.run("piazza-deserta",     "Piazza Deserta",       "The empty square in the hour of the siesta.",                "Oil on canvas", "70 × 90 cm", 2023, 120000, "https://picsum.photos/id/1052/800/1000", "available",  "oil-painting");
+    insert.run("uliveto-sera",       "Uliveto di Sera",      "An olive grove silvering in the evening wind.",              "Oil on linen",  "55 × 75 cm", 2025, 98000,  "https://picsum.photos/id/1067/800/1000", "sold",       "oil-painting");
   });
   seed();
   console.log("Database was empty — demo artworks seeded.");
@@ -159,6 +168,9 @@ app.post("/api/webhook", express.raw({ type: "application/json" }), (req, res) =
 
 // JSON parsing for all the OTHER routes — must come after the webhook.
 app.use(express.json());
+
+// Security headers (CSP left off until inline scripts in admin are audited)
+app.use(helmet({ contentSecurityPolicy: false }));
 
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -233,6 +245,13 @@ app.get("/admin", adminLimiter, requireAdmin, (req, res) => {
           <div><label>Dimensions</label><input name="dimensions" placeholder="60 x 80 cm" /></div>
           <div><label>Price (USD)</label><input name="price" type="number" step="0.01" placeholder="850" required /></div>
         </div>
+        <label>Category</label>
+        <select name="category" style="width:100%;font-family:inherit;font-size:0.95rem;padding:0.65rem 0.8rem;border:1.5px solid var(--line);border-radius:10px;margin-bottom:1rem;background:#fff;">
+          <option value="oil-painting">Oil Painting</option>
+          <option value="mosaic">Mosaic</option>
+          <option value="business-cards">Business Cards</option>
+          <option value="logos">Logos</option>
+        </select>
         <label>Image</label>
         <input name="image" type="file" accept="image/*" required />
         <button type="submit" class="btn-primary">Add to gallery</button>
@@ -305,11 +324,21 @@ app.get("/admin", adminLimiter, requireAdmin, (req, res) => {
 });
 
 // Add an artwork
-app.post("/admin/artworks", adminLimiter, requireAdmin, upload.single("image"), (req, res) => {
-  const { title, description, medium, dimensions, year, price } = req.body;
+app.post("/admin/artworks", adminLimiter, requireAdmin, upload.single("image"), async (req, res) => {
+  const { title, description, medium, dimensions, year, price, category } = req.body;
 
   if (!title || !price || !req.file) {
     return res.status(400).send("Title, price, and image are required.");
+  }
+
+  let imagePath, cloudinaryId;
+  try {
+    const result = await uploadToCloudinary(req.file.buffer);
+    imagePath    = result.secure_url;
+    cloudinaryId = result.public_id;
+  } catch (err) {
+    console.error("Cloudinary upload failed:", err.message);
+    return res.status(500).json({ error: "Image upload failed." });
   }
 
   const id =
@@ -317,8 +346,8 @@ app.post("/admin/artworks", adminLimiter, requireAdmin, upload.single("image"), 
     "-" + Date.now().toString().slice(-5);
 
   db.prepare(
-    `INSERT INTO artworks (id, title, description, medium, dimensions, year, price_cents, image_path)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO artworks (id, title, description, medium, dimensions, year, price_cents, image_path, cloudinary_id, category)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     title,
@@ -327,20 +356,23 @@ app.post("/admin/artworks", adminLimiter, requireAdmin, upload.single("image"), 
     dimensions || "",
     parseInt(year) || 0,
     Math.round(parseFloat(price) * 100),
-    `/images/${req.file.filename}`
+    imagePath,
+    cloudinaryId,
+    category || "oil-painting"
   );
 
   res.json({ ok: true });
 });
 
-// Delete an artwork (and its image file)
-app.post("/admin/artworks/:id/delete", adminLimiter, requireAdmin, (req, res) => {
-  const art = db.prepare("SELECT image_path FROM artworks WHERE id = ?").get(req.params.id);
+// Delete an artwork (and its Cloudinary image)
+app.post("/admin/artworks/:id/delete", adminLimiter, requireAdmin, async (req, res) => {
+  const art = db.prepare("SELECT cloudinary_id FROM artworks WHERE id = ?").get(req.params.id);
   if (!art) return res.status(404).json({ error: "Not found" });
 
-  if (art.image_path && art.image_path.startsWith("/images/")) {
-    const filePath = path.join(UPLOAD_DIR, path.basename(art.image_path));
-    fs.unlink(filePath, () => {});
+  if (art.cloudinary_id) {
+    try { await cloudinary.uploader.destroy(art.cloudinary_id); } catch (err) {
+      console.error("Cloudinary delete failed:", err.message);
+    }
   }
 
   db.prepare("DELETE FROM artworks WHERE id = ?").run(req.params.id);
@@ -412,12 +444,67 @@ app.post("/api/checkout", async (req, res) => {
 // Public list of artworks
 app.get("/api/artworks", (req, res) => {
   const artworks = db
-    .prepare("SELECT id, title, description, medium, dimensions, year, price_cents, image_path, status FROM artworks ORDER BY created_at DESC")
+    .prepare("SELECT id, title, description, medium, dimensions, year, price_cents, image_path, status, category FROM artworks ORDER BY created_at DESC")
     .all();
   res.json(artworks);
 });
 
 // Success page — verifies payment with Stripe
+function pageShell(title, bodyContent) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${title} — ShirinArt</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Jost:wght@400;500;600;700&family=Raleway:wght@300;400;500;600&family=Work+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+  <script src="/nav.js" defer></script>
+</head>
+<body class="page">
+  <header class="nav nav--solid">
+    <a href="/" class="wordmark">SHIRIN<span class="wordmark__art">art</span></a>
+    <nav class="nav__links" aria-label="Primary">
+      <a href="/">Home</a>
+      <a href="/gallery.html">Gallery</a>
+      <a href="/about.html">About</a>
+      <a href="/contact.html">Contact</a>
+    </nav>
+    <div class="nav__end">
+      <button class="hamburger" id="hamburger" aria-label="Open menu" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </header>
+  <main class="page-wrap">
+    ${bodyContent}
+  </main>
+  <footer class="footer">
+    <div class="footer__top">
+      <div class="footer__brand">
+        <p class="footer__mark">SHIRIN<span class="wordmark__art">art</span></p>
+        <p class="footer__tagline">Original oil paintings, each made once.</p>
+      </div>
+      <nav class="footer__nav" aria-label="Footer links">
+        <a href="/gallery.html">Gallery</a>
+        <a href="/about.html">About</a>
+        <a href="/contact.html">Contact</a>
+      </nav>
+      <div class="footer__social">
+        <a href="/contact.html" class="footer__commission-link">Commission a piece →</a>
+      </div>
+    </div>
+    <div class="footer__bottom">
+      <p class="footer__fine">© <span class="footer-year"></span> ShirinArt</p>
+      <p class="footer__fine">Ships to US · Canada · UK</p>
+    </div>
+  </footer>
+</body>
+</html>`;
+}
+
 app.get("/success", async (req, res) => {
   const sessionId = req.query.session_id;
   if (!sessionId) return res.redirect("/");
@@ -430,25 +517,35 @@ app.get("/success", async (req, res) => {
     console.error("Success lookup failed:", err.message);
   }
 
-  res.send(`
-    <html><body style="font-family: sans-serif; text-align: center; padding: 4rem;">
-      <h1>${paid ? "Thank you" : "Hmm…"}</h1>
-      <p>${paid
-        ? "Your order is confirmed. Shirin will be in touch about shipping."
-        : "We couldn't confirm your payment. Please contact us."}</p>
-      <a href="/">Return to the gallery</a>
-    </body></html>
-  `);
+  const body = paid ? `
+    <section class="page-hero" style="max-width:560px;margin:0 auto;text-align:center;">
+      <p class="section-head__label">Order confirmed</p>
+      <h1 class="page-hero__title">Thank you.</h1>
+      <p class="page-hero__sub">Your order is confirmed. Shirin will be in touch personally about shipping and delivery.</p>
+      <a href="/gallery.html" class="btn btn--solid" style="margin-top:2rem;">Return to the gallery</a>
+    </section>
+  ` : `
+    <section class="page-hero" style="max-width:560px;margin:0 auto;text-align:center;">
+      <p class="section-head__label">Something went wrong</p>
+      <h1 class="page-hero__title">We couldn't confirm your payment.</h1>
+      <p class="page-hero__sub">Your card may not have been charged. Please <a href="/contact.html" style="color:var(--vine)">get in touch</a> and we'll sort it out.</p>
+      <a href="/" class="btn btn--ghost" style="margin-top:2rem;">Return home</a>
+    </section>
+  `;
+
+  res.send(pageShell(paid ? "Thank you" : "Payment issue", body));
 });
 
 app.get("/cancel", (req, res) => {
-  res.send(`
-    <html><body style="font-family: sans-serif; text-align: center; padding: 4rem;">
-      <h1>Order cancelled</h1>
-      <p>No charge was made. Your cart is still here whenever you're ready.</p>
-      <a href="/">Return to the gallery</a>
-    </body></html>
-  `);
+  const body = `
+    <section class="page-hero" style="max-width:560px;margin:0 auto;text-align:center;">
+      <p class="section-head__label">No charge made</p>
+      <h1 class="page-hero__title">Order cancelled.</h1>
+      <p class="page-hero__sub">No worries — your cart is still waiting whenever you're ready.</p>
+      <a href="/gallery.html" class="btn btn--solid" style="margin-top:2rem;">Back to the gallery</a>
+    </section>
+  `;
+  res.send(pageShell("Order cancelled", body));
 });
 
 app.listen(process.env.PORT || 3000, () => console.log("listening"));

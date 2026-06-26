@@ -1,6 +1,7 @@
 const state = {
   artworks: [],
   cart: loadCart(),   // array of artwork ids
+  category: "all",   // active filter on gallery page
 };
 
 /* ---- cart persistence (survives refresh) ---- */
@@ -12,7 +13,10 @@ function saveCart() {
   localStorage.setItem("shirinart_cart", JSON.stringify(state.cart));
 }
 
-function money(cents) { return "$" + (cents / 100).toFixed(2); }
+function money(cents) {
+  const d = cents / 100;
+  return '$' + (Number.isInteger(d) ? d.toLocaleString('en-US') : d.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+}
 
 /* ---- lightbox ---- */
 let lightboxArt = null;
@@ -115,10 +119,12 @@ async function loadGallery() {
   state.artworks = await res.json();
   pruneCart();
 
-  // home page shows only the first N available; gallery shows everything
+  // home page shows only the first N available; gallery shows everything (filtered by category)
   let toShow = state.artworks;
   if (limit > 0) {
     toShow = state.artworks.filter(a => a.status === "available").slice(0, limit);
+  } else if (state.category !== "all") {
+    toShow = state.artworks.filter(a => a.category === state.category);
   }
 
   grid.innerHTML = "";
@@ -139,6 +145,10 @@ function renderCard(art) {
     <div class="card__frame">
       ${sold ? `<span class="card__badge">Sold</span>` : ""}
       <img src="${art.image_path}" alt="${art.title}" loading="lazy" />
+      ${!sold ? `<div class="card__hover-info">
+        <p class="card__hover-title">${art.title}</p>
+        <p class="card__hover-price">${money(art.price_cents)}</p>
+      </div>` : ""}
     </div>
     <div class="card__body">
       <h3 class="card__title">${art.title}</h3>
@@ -264,6 +274,16 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawe
   bindHovers();
   window.addEventListener("shirinart:rendered", bindHovers); // re-bind after cards load
 })();
+
+/* ---- category filter tabs ---- */
+document.querySelectorAll(".filter-tab").forEach(tab => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".filter-tab").forEach(t => t.classList.remove("is-active"));
+    tab.classList.add("is-active");
+    state.category = tab.dataset.cat;
+    loadGallery();
+  });
+});
 
 /* ---- checkout ---- */
 const checkoutBtn = document.getElementById("checkoutBtn");

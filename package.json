@@ -12,10 +12,13 @@
   "type": "commonjs",
   "dependencies": {
     "better-sqlite3": "^12.11.1",
+    "cloudinary": "^2.10.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "express-rate-limit": "^8.5.2",
+    "helmet": "^8.2.0",
     "multer": "^2.2.0",
+    "multer-storage-cloudinary": "^2.2.1",
     "stripe": "^22.2.3"
   }
 }
