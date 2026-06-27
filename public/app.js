@@ -56,9 +56,8 @@ function buildLightbox() {
         </div>
         <div class="lightbox__wallscale" id="lbWallScale" hidden>
           <p class="wallscale__label">Scale on your wall</p>
-          <div class="wallscale__vis">
-            <div class="wallscale__wall-col"></div>
-            <div class="wallscale__painting-col" id="wallscalePainting"></div>
+          <div class="wallscale__room">
+            <div class="wallscale__canvas" id="wallscaleCanvas"></div>
           </div>
           <div class="wallscale__ctrl">
             <label for="ceilingSlider">Ceiling: <strong id="ceilingVal">9</strong> ft</label>
@@ -112,22 +111,35 @@ function openLightbox(art) {
     b.classList.toggle("is-active", b.dataset.frame === currentFrame)
   );
 
-  // Wall scale tool
+  // Wall scale tool — only for wall-hanging art, not logos/business cards
   const dims = parseDims(art.dimensions);
+  const NOT_WALL_ART = new Set(["logos", "business-cards"]);
   const wallScaleEl = document.getElementById("lbWallScale");
-  if (dims) {
+  if (dims && !NOT_WALL_ART.has(art.category)) {
     wallScaleEl.hidden = false;
-    // Replace slider to clear any stale listeners from a previous painting
+    // Replace slider element to clear stale listeners from the previous painting
     const oldSlider = document.getElementById("ceilingSlider");
     const newSlider = oldSlider.cloneNode(true);
     oldSlider.replaceWith(newSlider);
     const updateScale = () => {
       const ft = parseFloat(newSlider.value);
-      const pct = (dims.h / (ft * 12)) * 100;
+      const ceilIn = ft * 12;
+      const room = document.querySelector(".wallscale__room");
+      const roomH = room.offsetHeight;
+      const roomW = room.offsetWidth;
+      // Raw painting size in pixels, proportional to the room rect representing the wall
+      const rawH = (dims.h / ceilIn) * roomH;
+      const rawW = rawH * (dims.w / dims.h);
+      // Scale down uniformly if either dimension exceeds 88% of the room, so wall is always visible
+      const scale = Math.min(1, (roomH * 0.88) / rawH, (roomW * 0.88) / rawW);
+      const canvasH = Math.round(rawH * scale);
+      const canvasW = Math.round(rawW * scale);
       document.getElementById("ceilingVal").textContent = ft;
-      document.getElementById("wallscalePainting").style.height = Math.min(pct, 100) + "%";
+      const canvas = document.getElementById("wallscaleCanvas");
+      canvas.style.height = canvasH + "px";
+      canvas.style.width = canvasW + "px";
       document.getElementById("wallscaleNote").textContent =
-        `This ${dims.h}″ painting fills ${Math.round(pct)}% of your ${ft}ft wall.`;
+        `This ${dims.w}″ × ${dims.h}″ piece fills ${Math.round((dims.h / ceilIn) * 100)}% of your ${ft}ft ceiling height.`;
     };
     newSlider.addEventListener("input", updateScale);
     updateScale();
