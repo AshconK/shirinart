@@ -42,12 +42,28 @@
       <p class="page-hero__sub">Each painting is an original — once it sells, it's gone.</p>
     </section>
 
-    <div class="filter-tabs" id="filterTabs">
-      <button class="filter-tab is-active" data-cat="all">All</button>
-      <button class="filter-tab" data-cat="oil-painting">Oil Painting</button>
-      <button class="filter-tab" data-cat="mosaic">Mosaic</button>
-      <button class="filter-tab" data-cat="business-cards">Business Cards</button>
-      <button class="filter-tab" data-cat="logos">Logos</button>
+    <div class="gallery-toolbar">
+      <div class="filter-tabs" id="filterTabs">
+        <button class="filter-tab is-active" data-cat="all">All</button>
+        <button class="filter-tab" data-cat="oil-painting">Oil Painting</button>
+        <button class="filter-tab" data-cat="mosaic">Mosaic</button>
+        <button class="filter-tab" data-cat="business-cards">Business Cards</button>
+        <button class="filter-tab" data-cat="logos">Logos</button>
+      </div>
+      <div class="view-toggle">
+        <button class="view-btn is-active" data-view="grid" aria-label="Grid view" title="Grid view">
+          <svg viewBox="0 0 18 18" width="15" height="15" fill="currentColor" aria-hidden="true">
+            <rect x="1" y="1" width="7" height="7" rx="1.5"/><rect x="10" y="1" width="7" height="7" rx="1.5"/>
+            <rect x="1" y="10" width="7" height="7" rx="1.5"/><rect x="10" y="10" width="7" height="7" rx="1.5"/>
+          </svg>
+        </button>
+        <button class="view-btn" data-view="wall" aria-label="Museum wall view" title="Museum wall">
+          <svg viewBox="0 0 18 18" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="1" y="3" width="7" height="10" rx="1"/><rect x="10" y="6" width="7" height="7" rx="1"/>
+            <line x1="1" y1="16" x2="17" y2="16"/>
+          </svg>
+        </button>
+      </div>
     </div>
 
     <div id="grid"></div>
@@ -96,6 +112,14 @@
         <p class="info-strip__text">Not sure about a piece? <a href="/contact.html" style="color:var(--vine)">Send a message</a> — happy to share more photos or dimensions before you commit.</p>
       </div>
     </div>
+  </section>
+
+  <!-- Commission CTA -->
+  <section class="commission">
+    <p class="commission__eyebrow">Bespoke Work</p>
+    <h2 class="commission__title">Commission a Painting</h2>
+    <p class="commission__text">Have a place, a memory, or a feeling you'd like captured in oil? I take a small number of commissions each year — each one a conversation before a single brushstroke.</p>
+    <a href="/contact.html" class="btn btn--solid">Get in touch</a>
   </section>
 
   <footer class="footer">

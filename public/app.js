@@ -1,7 +1,8 @@
 const state = {
   artworks: [],
-  cart: loadCart(),   // array of artwork ids
-  category: "all",   // active filter on gallery page
+  cart: loadCart(),
+  category: "all",
+  viewMode: "grid",
 };
 
 /* ---- cart persistence (survives refresh) ---- */
@@ -18,8 +19,14 @@ function money(cents) {
   return '$' + (Number.isInteger(d) ? d.toLocaleString('en-US') : d.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 }
 
+function parseDims(dimStr) {
+  const m = dimStr && dimStr.match(/(\d+(?:\.\d+)?)\s*[×x]\s*(\d+(?:\.\d+)?)/i);
+  return m ? { w: parseFloat(m[1]), h: parseFloat(m[2]) } : null;
+}
+
 /* ---- lightbox ---- */
 let lightboxArt = null;
+let currentFrame = "";
 
 function buildLightbox() {
   const el = document.createElement("div");
@@ -36,6 +43,29 @@ function buildLightbox() {
         <p class="lightbox__meta" id="lbMeta"></p>
         <p class="lightbox__desc" id="lbDesc"></p>
         <p class="lightbox__price" id="lbPrice"></p>
+        <div class="lightbox__frames" id="lbFrames">
+          <p class="lightbox__frames-label">Virtual frame</p>
+          <div class="lightbox__frame-opts">
+            <button class="frame-opt is-active" data-frame="">None</button>
+            <button class="frame-opt" data-frame="natural">Wood</button>
+            <button class="frame-opt" data-frame="black">Black</button>
+            <button class="frame-opt" data-frame="white">White</button>
+            <button class="frame-opt" data-frame="gold">Gold</button>
+            <button class="frame-opt" data-frame="float">Float</button>
+          </div>
+        </div>
+        <div class="lightbox__wallscale" id="lbWallScale" hidden>
+          <p class="wallscale__label">Scale on your wall</p>
+          <div class="wallscale__vis">
+            <div class="wallscale__wall-col"></div>
+            <div class="wallscale__painting-col" id="wallscalePainting"></div>
+          </div>
+          <div class="wallscale__ctrl">
+            <label for="ceilingSlider">Ceiling: <strong id="ceilingVal">9</strong> ft</label>
+            <input type="range" id="ceilingSlider" min="7" max="14" value="9" step="0.5" />
+          </div>
+          <p class="wallscale__note" id="wallscaleNote"></p>
+        </div>
         <div class="lightbox__actions"><button class="btn btn--solid btn--block" id="lbCart"></button></div>
       </div>
     </div>`;
@@ -46,6 +76,13 @@ function buildLightbox() {
   document.addEventListener("keydown", e => { if (e.key === "Escape") closeLightbox(); });
   document.getElementById("lbCart").addEventListener("click", () => {
     if (lightboxArt) toggleCart(lightboxArt.id);
+  });
+  document.getElementById("lbFrames").addEventListener("click", e => {
+    const btn = e.target.closest(".frame-opt");
+    if (!btn) return;
+    currentFrame = btn.dataset.frame;
+    document.querySelectorAll(".frame-opt").forEach(b => b.classList.toggle("is-active", b === btn));
+    document.querySelector(".lightbox__image-wrap").dataset.frame = currentFrame;
   });
 }
 
@@ -68,6 +105,36 @@ function openLightbox(art) {
     cartBtn.textContent = inCart ? "Remove from cart" : "Add to cart";
     cartBtn.className = "btn btn--block " + (inCart ? "btn--ghost" : "btn--solid");
   }
+  // Restore active frame
+  const imageWrap = document.querySelector(".lightbox__image-wrap");
+  imageWrap.dataset.frame = currentFrame;
+  document.querySelectorAll(".frame-opt").forEach(b =>
+    b.classList.toggle("is-active", b.dataset.frame === currentFrame)
+  );
+
+  // Wall scale tool
+  const dims = parseDims(art.dimensions);
+  const wallScaleEl = document.getElementById("lbWallScale");
+  if (dims) {
+    wallScaleEl.hidden = false;
+    // Replace slider to clear any stale listeners from a previous painting
+    const oldSlider = document.getElementById("ceilingSlider");
+    const newSlider = oldSlider.cloneNode(true);
+    oldSlider.replaceWith(newSlider);
+    const updateScale = () => {
+      const ft = parseFloat(newSlider.value);
+      const pct = (dims.h / (ft * 12)) * 100;
+      document.getElementById("ceilingVal").textContent = ft;
+      document.getElementById("wallscalePainting").style.height = Math.min(pct, 100) + "%";
+      document.getElementById("wallscaleNote").textContent =
+        `This ${dims.h}″ painting fills ${Math.round(pct)}% of your ${ft}ft wall.`;
+    };
+    newSlider.addEventListener("input", updateScale);
+    updateScale();
+  } else {
+    wallScaleEl.hidden = true;
+  }
+
   const lb = document.getElementById("lightbox");
   lb.hidden = false;
   document.body.style.overflow = "hidden";
@@ -75,8 +142,15 @@ function openLightbox(art) {
 
 function closeLightbox() {
   const lb = document.getElementById("lightbox");
-  if (lb) { lb.hidden = true; document.body.style.overflow = ""; }
+  if (lb) {
+    lb.hidden = true;
+    document.body.style.overflow = "";
+    const imageWrap = document.querySelector(".lightbox__image-wrap");
+    if (imageWrap) imageWrap.dataset.frame = "";
+  }
   lightboxArt = null;
+  currentFrame = "";
+  document.querySelectorAll(".frame-opt").forEach((b, i) => b.classList.toggle("is-active", i === 0));
 }
 
 function refreshLightbox() {
@@ -91,6 +165,18 @@ if (heroNav) {
   const onScroll = () => heroNav.classList.toggle("is-scrolled", window.scrollY > 80);
   window.addEventListener("scroll", onScroll, { passive: true });
   onScroll();
+}
+
+// Hero parallax — background image drifts slower than the page scroll
+const heroImage = document.getElementById("heroImage");
+if (heroImage) {
+  const heroSection = heroImage.closest(".hero");
+  window.addEventListener("scroll", () => {
+    const scrolled = window.scrollY;
+    if (heroSection && scrolled < heroSection.offsetHeight * 1.5) {
+      heroImage.style.backgroundPositionY = `calc(50% + ${scrolled * 0.28}px)`;
+    }
+  }, { passive: true });
 }
 
 /* ---- reveal elements as they scroll into view ---- */
@@ -128,9 +214,27 @@ async function loadGallery() {
   }
 
   grid.innerHTML = "";
-  for (const art of toShow) grid.appendChild(renderCard(art));
+  if (toShow.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "grid__empty";
+    empty.innerHTML = `<p class="grid__empty-text">Nothing in this category yet — more coming soon.</p>`;
+    grid.appendChild(empty);
+    refreshCartUI();
+    return;
+  }
+  if (state.viewMode === "wall") {
+    grid.classList.add("wall-view");
+    for (const art of toShow) grid.appendChild(renderWallCard(art));
+  } else {
+    grid.classList.remove("wall-view");
+    toShow.forEach((art, i) => {
+      const card = renderCard(art);
+      card.style.setProperty("--card-delay", `${Math.min(i, 7) * 65}ms`);
+      grid.appendChild(card);
+    });
+    setupReveals();
+  }
   refreshCartUI();
-  setupReveals();
   window.dispatchEvent(new Event("shirinart:rendered"));
 }
 
@@ -169,6 +273,32 @@ function renderCard(art) {
   card.querySelector(".card__frame").style.cursor = "pointer";
   card.querySelector(".card__frame").addEventListener("click", () => openLightbox(art));
   return card;
+}
+
+function renderWallCard(art) {
+  const dims = parseDims(art.dimensions);
+  const wallH = window.innerWidth < 600 ? 180 : 300;
+  const ratio = dims ? dims.w / dims.h : 3 / 4;
+  const cardW = Math.round(wallH * ratio);
+  const sold = art.status !== "available";
+  const inCart = state.cart.includes(art.id);
+
+  const el = document.createElement("figure");
+  el.className = "wall-card" + (sold ? " wall-card--sold" : "");
+  el.style.width = cardW + "px";
+  el.style.height = wallH + "px";
+  el.innerHTML = `
+    <img src="${art.image_path}" alt="${art.title}" loading="lazy" />
+    ${sold ? `<div class="wall-card__sold">Sold</div>` : ""}
+    <figcaption class="wall-card__label">
+      <span class="wall-card__title">${art.title}</span>
+      <span class="wall-card__price">${sold ? "Sold" : money(art.price_cents)}</span>
+      ${!sold ? `<button class="wall-card__cart" data-add="${art.id}">${inCart ? "In cart" : "Add to cart"}</button>` : ""}
+    </figcaption>`;
+  el.addEventListener("click", () => openLightbox(art));
+  const btn = el.querySelector("[data-add]");
+  if (btn) btn.addEventListener("click", e => { e.stopPropagation(); toggleCart(art.id); });
+  return el;
 }
 
 /* ---- cart actions ---- */
@@ -311,6 +441,15 @@ if (checkoutBtn) {
     }
   });
 }
+
+/* ---- view mode toggle (gallery page only) ---- */
+document.querySelectorAll(".view-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    state.viewMode = btn.dataset.view;
+    document.querySelectorAll(".view-btn").forEach(b => b.classList.toggle("is-active", b === btn));
+    loadGallery();
+  });
+});
 
 /* ---- start ---- */
 buildLightbox();
